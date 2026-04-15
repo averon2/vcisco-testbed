@@ -240,7 +240,154 @@ def status():
         "note": "Free-tier accounts: first 750 hrs/mo of t3.micro are free.",
     }
 
+    # ── Desired-vs-actual summary ───────────────────────────────────
+    # What Terraform is supposed to produce, compared to what we see.
+    names = {i["name"] for i in out["instances"]}
+    ssm_online = {m["id"] for m in out["ssm_managed"] if m.get("ping") == "Online"}
+    instance_ids_online = {
+        i["id"] for i in out["instances"] if i["id"] in ssm_online
+    }
+
+    out["desired_state"] = [
+        {
+            "component": "acme-web-01 (nginx)",
+            "want": "t3.micro, AL2023, nginx installed, SSM reporting",
+            "ok": "acme-web-01" in names
+            and any(
+                i["name"] == "acme-web-01" and i["state"] == "running"
+                for i in out["instances"]
+            ),
+        },
+        {
+            "component": "acme-app-01 (Tomcat + Log4j)",
+            "want": "t3.micro, AL2023, Tomcat 9.0.40, SSM reporting",
+            "ok": "acme-app-01" in names
+            and any(
+                i["name"] == "acme-app-01" and i["state"] == "running"
+                for i in out["instances"]
+            ),
+        },
+        {
+            "component": "SSM managed (both hosts online)",
+            "want": "Both EC2 hosts appear in DescribeInstanceInformation",
+            "ok": len(instance_ids_online) >= 2,
+        },
+        {
+            "component": "Inventory bucket",
+            "want": "acme-ssm-inventory-* S3 bucket exists",
+            "ok": out["inventory_bucket"] is not None,
+        },
+        {
+            "component": "Synthetic workstations seeded",
+            "want": "10 fabricated hosts in s3://…/synthetic/",
+            "ok": (out["inventory_bucket"] or {}).get("synthetic_count", 0) > 0,
+        },
+        {
+            "component": "vcisco-readonly cross-account role",
+            "want": "IAM role exists for vcisco to assume",
+            "ok": out["vciso_role"] is not None,
+        },
+    ]
+
     return jsonify(out)
+
+
+@app.get("/api/inventory/<instance_id>")
+def instance_inventory(instance_id: str):
+    """Fetch installed software for one SSM-managed EC2 instance.
+
+    This is the data vcisco would consume. We surface it in the dashboard
+    so you can showcase what vcisco will see before connecting it.
+    """
+    creds = _get_creds()
+    if not creds:
+        return jsonify({"ok": False, "error": "not connected"}), 401
+    try:
+        ssm = _client("ssm")
+        apps = []
+        paginator = ssm.get_paginator("list_inventory_entries")
+        pages = paginator.paginate(
+            InstanceId=instance_id, TypeName="AWS:Application"
+        )
+        for page in pages:
+            for entry in page.get("Entries", []):
+                apps.append(
+                    {
+                        "name": entry.get("Name", ""),
+                        "version": entry.get("Version", ""),
+                        "publisher": entry.get("Publisher", ""),
+                        "installed": entry.get("InstalledTime", ""),
+                    }
+                )
+        apps.sort(key=lambda a: a["name"].lower())
+        return jsonify({"ok": True, "instance_id": instance_id, "apps": apps})
+    except ClientError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+@app.get("/api/synthetic")
+def synthetic_list():
+    """List synthetic workstations and their installed apps by reading the
+    synthetic/ prefix in the inventory bucket."""
+    import json as _json
+
+    creds = _get_creds()
+    if not creds:
+        return jsonify({"ok": False, "error": "not connected"}), 401
+    try:
+        s3 = _client("s3")
+        buckets = s3.list_buckets().get("Buckets", [])
+        bucket = next(
+            (b["Name"] for b in buckets if b["Name"].startswith("acme-ssm-inventory-")),
+            None,
+        )
+        if not bucket:
+            return jsonify({"ok": True, "hosts": [], "note": "no inventory bucket"})
+
+        hosts: dict[str, dict] = {}
+
+        # Pull AWS:InstanceInformation records (one per host)
+        info_prefix = "synthetic/AWS:InstanceInformation/"
+        for obj in s3.list_objects_v2(Bucket=bucket, Prefix=info_prefix).get(
+            "Contents", []
+        ):
+            body = s3.get_object(Bucket=bucket, Key=obj["Key"])["Body"].read()
+            doc = _json.loads(body)
+            for row in doc.get("Content", []):
+                hid = row.get("InstanceId") or row.get("ResourceId")
+                hosts[hid] = {
+                    "id": hid,
+                    "hostname": row.get("ComputerName", ""),
+                    "os": row.get("PlatformName", ""),
+                    "persona": row.get("_persona", ""),
+                    "apps": [],
+                }
+
+        # Pull AWS:Application records (one file per host, may contain many apps)
+        apps_prefix = "synthetic/AWS:Application/"
+        for obj in s3.list_objects_v2(Bucket=bucket, Prefix=apps_prefix).get(
+            "Contents", []
+        ):
+            body = s3.get_object(Bucket=bucket, Key=obj["Key"])["Body"].read()
+            doc = _json.loads(body)
+            for row in doc.get("Content", []):
+                hid = row.get("ResourceId")
+                if hid not in hosts:
+                    hosts[hid] = {"id": hid, "hostname": "", "os": "", "persona": "", "apps": []}
+                hosts[hid]["apps"].append(
+                    {
+                        "name": row.get("Name", ""),
+                        "version": row.get("Version", ""),
+                        "publisher": row.get("Publisher", ""),
+                    }
+                )
+
+        ordered = sorted(hosts.values(), key=lambda h: h["id"])
+        return jsonify({"ok": True, "hosts": ordered})
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 if __name__ == "__main__":

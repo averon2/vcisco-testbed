@@ -92,6 +92,20 @@
     font-size: 12px; margin-bottom: 12px; font-family: var(--mono);
   }
 
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover { background: rgba(255,255,255,0.02); }
+  .check-ok { color: var(--ok); font-weight: 600; }
+  .check-no { color: var(--danger); font-weight: 600; }
+  .inv-panel {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 14px 16px; margin-top: 10px;
+  }
+  .inv-panel h3 { font-size: 12px; margin: 0 0 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; font-weight: 500; }
+  .inv-panel table td { font-size: 12.5px; }
+  .inv-panel .app-name { color: var(--text); }
+  .inv-panel .app-version { color: var(--accent); }
+  .loading { color: var(--muted); font-size: 12px; padding: 12px; font-style: italic; }
+
   .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; font-size: 13px; }
   .kv dt { color: var(--muted); }
   .kv dd { margin: 0; font-family: var(--mono); }
@@ -184,8 +198,26 @@
     </div>
 
     <div class="card">
+      <h2>Desired vs Actual</h2>
+      <div id="desiredTable"></div>
+    </div>
+
+    <div class="card">
       <h2>EC2 Instances</h2>
+      <p style="color:var(--muted); font-size:12px; margin:-4px 0 10px;">
+        Click a row to pull its installed-software inventory — this is what vcisco will read.
+      </p>
       <div id="instTable"></div>
+      <div id="invPanels"></div>
+    </div>
+
+    <div class="card">
+      <h2>Synthetic Workstations</h2>
+      <p style="color:var(--muted); font-size:12px; margin:-4px 0 10px;">
+        Fabricated SMB laptops, stored in s3://…/synthetic/. Click a row to see installed software.
+      </p>
+      <div id="synthTable"></div>
+      <div id="synthPanels"></div>
     </div>
 
     <div class="card">
@@ -252,14 +284,100 @@
   }
 
   async function refresh() {
+    $('invPanels').innerHTML = '';
+    $('synthPanels').innerHTML = '';
     const r = await api('/api/status');
     if (r.status === 401) { disconnect(); return; }
     render(r.body);
+    await loadSynthetic();
     $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  }
+
+  function renderDesired(rows) {
+    if (!rows || !rows.length) { $('desiredTable').innerHTML = ''; return; }
+    $('desiredTable').innerHTML = `<table><thead><tr>
+        <th style="width:40px"></th><th>Component</th><th>What we want</th>
+      </tr></thead><tbody>` +
+      rows.map(r => `<tr>
+        <td class="${r.ok ? 'check-ok' : 'check-no'}">${r.ok ? '✓' : '✗'}</td>
+        <td>${escapeHtml(r.component)}</td>
+        <td class="muted">${escapeHtml(r.want)}</td>
+      </tr>`).join('') + '</tbody></table>';
+  }
+
+  async function toggleInventory(instanceId) {
+    const panelId = 'inv-' + instanceId;
+    const existing = document.getElementById(panelId);
+    if (existing) { existing.remove(); return; }
+    const panel = document.createElement('div');
+    panel.id = panelId;
+    panel.className = 'inv-panel';
+    panel.innerHTML = `<h3>Installed software · ${escapeHtml(instanceId)}</h3><div class="loading">Loading…</div>`;
+    $('invPanels').appendChild(panel);
+    const r = await api('/api/inventory/' + encodeURIComponent(instanceId));
+    if (!r.ok) {
+      panel.innerHTML = `<h3>${escapeHtml(instanceId)}</h3><div class="error">${escapeHtml(r.body.error || 'Failed')}</div>`;
+      return;
+    }
+    const apps = r.body.apps || [];
+    if (!apps.length) {
+      panel.innerHTML = `<h3>Installed software · ${escapeHtml(instanceId)}</h3><div class="empty">No applications reported yet. SSM Inventory runs every 30 min.</div>`;
+      return;
+    }
+    panel.innerHTML = `<h3>Installed software · ${escapeHtml(instanceId)} · ${apps.length} apps</h3>
+      <table><thead><tr><th>Name</th><th>Version</th><th>Publisher</th></tr></thead><tbody>` +
+      apps.map(a => `<tr>
+        <td class="app-name">${escapeHtml(a.name)}</td>
+        <td class="app-version">${escapeHtml(a.version)}</td>
+        <td class="muted">${escapeHtml(a.publisher)}</td>
+      </tr>`).join('') + '</tbody></table>';
+  }
+
+  let synthHosts = null;
+  async function loadSynthetic() {
+    const r = await api('/api/synthetic');
+    if (!r.ok) { $('synthTable').innerHTML = `<div class="error">${escapeHtml(r.body.error || 'Failed')}</div>`; return; }
+    synthHosts = r.body.hosts || [];
+    if (!synthHosts.length) {
+      $('synthTable').innerHTML = `<div class="empty">No synthetic workstations yet. Run <code>make seed</code>.</div>`;
+      return;
+    }
+    $('synthTable').innerHTML = `<table><thead><tr>
+        <th>Host</th><th>OS</th><th>Persona</th><th>Apps</th>
+      </tr></thead><tbody>` +
+      synthHosts.map(h => `<tr class="clickable" data-synth="${escapeHtml(h.id)}">
+        <td>${escapeHtml(h.hostname || h.id)}</td>
+        <td class="muted">${escapeHtml(h.os)}</td>
+        <td class="muted">${escapeHtml(h.persona)}</td>
+        <td class="muted">${h.apps.length}</td>
+      </tr>`).join('') + '</tbody></table>';
+    $('synthTable').querySelectorAll('[data-synth]').forEach(tr => {
+      tr.onclick = () => toggleSynthetic(tr.dataset.synth);
+    });
+  }
+
+  function toggleSynthetic(hostId) {
+    const panelId = 'synth-' + hostId;
+    const existing = document.getElementById(panelId);
+    if (existing) { existing.remove(); return; }
+    const host = (synthHosts || []).find(h => h.id === hostId);
+    if (!host) return;
+    const panel = document.createElement('div');
+    panel.id = panelId;
+    panel.className = 'inv-panel';
+    panel.innerHTML = `<h3>${escapeHtml(host.hostname)} · ${host.apps.length} apps · ${escapeHtml(host.os)}</h3>
+      <table><thead><tr><th>Name</th><th>Version</th><th>Publisher</th></tr></thead><tbody>` +
+      host.apps.map(a => `<tr>
+        <td class="app-name">${escapeHtml(a.name)}</td>
+        <td class="app-version">${escapeHtml(a.version)}</td>
+        <td class="muted">${escapeHtml(a.publisher || '')}</td>
+      </tr>`).join('') + '</tbody></table>';
+    $('synthPanels').appendChild(panel);
   }
 
   function render(s) {
     showError($('errBox'), (s.errors || []).join('  ·  '));
+    renderDesired(s.desired_state);
 
     const running = (s.instances || []).filter(i => i.state === 'running').length;
     const total = (s.instances || []).length;
@@ -286,7 +404,7 @@
       $('instTable').innerHTML = `<table><thead><tr>
           <th>Name</th><th>Role</th><th>Type</th><th>State</th><th>Public IP</th><th>Launched</th>
         </tr></thead><tbody>` +
-        s.instances.map(i => `<tr>
+        s.instances.map(i => `<tr class="clickable" data-inst="${escapeHtml(i.id)}">
           <td>${escapeHtml(i.name || i.id)}</td>
           <td class="muted">${escapeHtml(i.role || '')}</td>
           <td class="muted">${escapeHtml(i.type || '')}</td>
@@ -294,6 +412,9 @@
           <td>${escapeHtml(i.public_ip || '—')}</td>
           <td class="muted">${i.launch_time ? new Date(i.launch_time).toLocaleString() : '—'}</td>
         </tr>`).join('') + '</tbody></table>';
+      $('instTable').querySelectorAll('[data-inst]').forEach(tr => {
+        tr.onclick = () => toggleInventory(tr.dataset.inst);
+      });
     }
 
     // SSM table
