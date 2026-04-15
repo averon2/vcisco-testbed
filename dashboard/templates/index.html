@@ -110,6 +110,30 @@
   .kv dt { color: var(--muted); }
   .kv dd { margin: 0; font-family: var(--mono); }
 
+  pre.code-block {
+    background: #0f0f15; border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px; font: 12px/1.5 var(--mono); color: #cfcfdc;
+    overflow-x: auto; margin: 0;
+  }
+  .code-wrap { position: relative; }
+  .copy-btn {
+    position: absolute; top: 8px; right: 8px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    color: var(--muted); font-size: 11px; padding: 4px 10px;
+    border-radius: 5px; cursor: pointer;
+  }
+  .copy-btn:hover { color: var(--text); border-color: var(--accent); }
+  .copy-btn.copied { color: var(--ok); border-color: var(--ok); }
+
+  .policy-tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+  .policy-tab {
+    background: transparent; border: 1px solid var(--border);
+    color: var(--muted); padding: 6px 12px; border-radius: 5px;
+    font-size: 12px; cursor: pointer;
+  }
+  .policy-tab.active { background: var(--surface-2); color: var(--text); border-color: var(--accent); }
+  .note-list { margin: 0; padding-left: 18px; color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+
   .toolbar { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; justify-content: flex-end; }
   .toolbar .spacer { flex: 1; }
   .toolbar .updated { font-size: 11px; color: var(--faint); }
@@ -128,6 +152,56 @@
 </header>
 
 <main>
+
+  <!-- Always-visible: what the testbed plans to deploy -->
+  <div class="card">
+    <h2>Testbed Blueprint</h2>
+    <p style="color:var(--muted); font-size:12px; margin:-4px 0 10px;">
+      What <code>make up</code> will deploy. ✓ / ✗ appear next to each line once you connect and we can see live state.
+    </p>
+    <div id="desiredTable"></div>
+  </div>
+
+  <!-- Always-visible: synthetic workstation personas from the YAML -->
+  <div class="card">
+    <h2>Synthetic Workstations (planned)</h2>
+    <p style="color:var(--muted); font-size:12px; margin:-4px 0 10px;">
+      10 fabricated SMB laptops. Click a row to see what will be installed on each persona.
+      After connecting and running <code>make seed</code>, this card shows the versions live from S3.
+    </p>
+    <div id="synthTable"></div>
+    <div id="synthPanels"></div>
+  </div>
+
+  <!-- Always-visible: IAM policies to wire vcisco to the testbed -->
+  <div class="card">
+    <h2>Connect vcisco to this testbed</h2>
+    <p style="color:var(--muted); font-size:12px; margin:-4px 0 12px;">
+      Terraform creates the <code>vciso-readonly</code> role for you. These policies are mirrored here so you can paste them into IAM manually, audit what they grant, or share with a prospect's security team.
+    </p>
+
+    <div class="row2" style="margin-bottom:14px">
+      <div class="field">
+        <label>vcisco AWS account ID</label>
+        <input type="text" id="polAccount" placeholder="123456789012" />
+      </div>
+      <div class="field">
+        <label>External ID (secret; same value goes in vcisco)</label>
+        <input type="text" id="polExternal" placeholder="long-random-string" />
+      </div>
+    </div>
+
+    <div class="policy-tabs">
+      <button class="policy-tab active" data-pol="trust">Trust policy</button>
+      <button class="policy-tab" data-pol="perm">Permissions policy</button>
+      <button class="policy-tab" data-pol="notes">Notes</button>
+    </div>
+
+    <div id="polBody" class="code-wrap">
+      <button class="copy-btn" id="polCopy">Copy</button>
+      <pre class="code-block" id="polCode">Loading…</pre>
+    </div>
+  </div>
 
   <!-- Connect card -->
   <div class="card" id="connectCard">
@@ -198,26 +272,12 @@
     </div>
 
     <div class="card">
-      <h2>Desired vs Actual</h2>
-      <div id="desiredTable"></div>
-    </div>
-
-    <div class="card">
       <h2>EC2 Instances</h2>
       <p style="color:var(--muted); font-size:12px; margin:-4px 0 10px;">
         Click a row to pull its installed-software inventory — this is what vcisco will read.
       </p>
       <div id="instTable"></div>
       <div id="invPanels"></div>
-    </div>
-
-    <div class="card">
-      <h2>Synthetic Workstations</h2>
-      <p style="color:var(--muted); font-size:12px; margin:-4px 0 10px;">
-        Fabricated SMB laptops, stored in s3://…/synthetic/. Click a row to see installed software.
-      </p>
-      <div id="synthTable"></div>
-      <div id="synthPanels"></div>
     </div>
 
     <div class="card">
@@ -293,16 +353,120 @@
     $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
   }
 
+  // ─── Plan (unauthenticated) ──────────────────────────────────────
+  let planWorkstations = [];
+  async function loadPlan() {
+    const r = await api('/api/plan');
+    if (!r.ok) return;
+    // Render the blueprint with no status yet — just the "what we want" column.
+    renderDesired(r.body.components.map(c => ({ ...c, ok: null })));
+    planWorkstations = r.body.workstations || [];
+    synthHosts = null;
+    renderSyntheticFromPlan();
+  }
+
+  function renderSyntheticFromPlan() {
+    if (!planWorkstations.length) {
+      $('synthTable').innerHTML = `<div class="empty">No personas defined yet.</div>`;
+      return;
+    }
+    $('synthTable').innerHTML = `<table><thead><tr>
+        <th>Host</th><th>OS</th><th>Persona</th><th>Apps</th>
+      </tr></thead><tbody>` +
+      planWorkstations.map(h => `<tr class="clickable" data-plan="${escapeHtml(h.id)}">
+        <td>${escapeHtml(h.hostname || h.id)}</td>
+        <td class="muted">${escapeHtml(h.os || '')}</td>
+        <td class="muted">${escapeHtml(h.persona || '')}</td>
+        <td class="muted">${(h.apps || []).length}</td>
+      </tr>`).join('') + '</tbody></table>';
+    $('synthTable').querySelectorAll('[data-plan]').forEach(tr => {
+      tr.onclick = () => togglePlanSynthetic(tr.dataset.plan);
+    });
+  }
+
+  function togglePlanSynthetic(hostId) {
+    const panelId = 'synth-' + hostId;
+    const existing = document.getElementById(panelId);
+    if (existing) { existing.remove(); return; }
+    const host = planWorkstations.find(h => h.id === hostId);
+    if (!host) return;
+    const panel = document.createElement('div');
+    panel.id = panelId;
+    panel.className = 'inv-panel';
+    panel.innerHTML = `<h3>${escapeHtml(host.hostname || host.id)} · ${(host.apps||[]).length} apps · ${escapeHtml(host.os || '')}</h3>
+      <table><thead><tr><th>Name</th><th>Version (planned)</th></tr></thead><tbody>` +
+      (host.apps || []).map(a => `<tr>
+        <td class="app-name">${escapeHtml(a.name)}</td>
+        <td class="app-version">${escapeHtml(a.version)}</td>
+      </tr>`).join('') + '</tbody></table>';
+    $('synthPanels').appendChild(panel);
+  }
+
+  // ─── Policies (unauthenticated) ──────────────────────────────────
+  let policyData = null;
+  let activePolicy = 'trust';
+
+  async function loadPolicies() {
+    const acct = $('polAccount').value.trim() || 'VCISCO_ACCOUNT_ID';
+    const ext = $('polExternal').value.trim() || 'YOUR_EXTERNAL_ID';
+    const qs = `?account=${encodeURIComponent(acct)}&external_id=${encodeURIComponent(ext)}`;
+    const r = await api('/api/policies' + qs);
+    if (!r.ok) return;
+    policyData = r.body;
+    renderPolicy();
+  }
+
+  function renderPolicy() {
+    if (!policyData) return;
+    const el = $('polCode');
+    if (activePolicy === 'trust') {
+      el.textContent = JSON.stringify(policyData.trust_policy, null, 2);
+    } else if (activePolicy === 'perm') {
+      el.textContent = JSON.stringify(policyData.permissions_policy, null, 2);
+    } else {
+      el.textContent = policyData.notes.map((n, i) => `${i + 1}. ${n}`).join('\n');
+    }
+  }
+
+  document.querySelectorAll('.policy-tab').forEach(t => {
+    t.onclick = () => {
+      document.querySelectorAll('.policy-tab').forEach(x => x.classList.remove('active'));
+      t.classList.add('active');
+      activePolicy = t.dataset.pol;
+      renderPolicy();
+    };
+  });
+
+  ['polAccount', 'polExternal'].forEach(id => {
+    $(id).addEventListener('input', () => loadPolicies());
+  });
+
+  $('polCopy').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText($('polCode').textContent);
+      $('polCopy').textContent = 'Copied';
+      $('polCopy').classList.add('copied');
+      setTimeout(() => {
+        $('polCopy').textContent = 'Copy';
+        $('polCopy').classList.remove('copied');
+      }, 1500);
+    } catch { /* ignore */ }
+  };
+
   function renderDesired(rows) {
     if (!rows || !rows.length) { $('desiredTable').innerHTML = ''; return; }
     $('desiredTable').innerHTML = `<table><thead><tr>
         <th style="width:40px"></th><th>Component</th><th>What we want</th>
       </tr></thead><tbody>` +
-      rows.map(r => `<tr>
-        <td class="${r.ok ? 'check-ok' : 'check-no'}">${r.ok ? '✓' : '✗'}</td>
-        <td>${escapeHtml(r.component)}</td>
-        <td class="muted">${escapeHtml(r.want)}</td>
-      </tr>`).join('') + '</tbody></table>';
+      rows.map(r => {
+        const cell = r.ok === null || r.ok === undefined
+          ? '<td class="muted" title="Connect to check live state">·</td>'
+          : `<td class="${r.ok ? 'check-ok' : 'check-no'}">${r.ok ? '✓' : '✗'}</td>`;
+        return `<tr>${cell}
+          <td>${escapeHtml(r.component)}</td>
+          <td class="muted">${escapeHtml(r.want)}</td>
+        </tr>`;
+      }).join('') + '</tbody></table>';
   }
 
   async function toggleInventory(instanceId) {
@@ -465,6 +629,10 @@
   ['fAccess','fSecret','fToken','fRegion'].forEach(id => {
     $(id).addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
   });
+
+  // Unauthenticated: render the blueprint and policy boilerplate immediately.
+  loadPlan();
+  loadPolicies();
 </script>
 </body>
 </html>

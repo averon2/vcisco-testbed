@@ -16,7 +16,9 @@ Design constraints:
 
 from __future__ import annotations
 
+import json as _json_builtin
 import os
+import pathlib
 import secrets
 import time
 from typing import Any
@@ -24,6 +26,104 @@ from typing import Any
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from flask import Flask, jsonify, render_template, request, session
+
+try:
+    import yaml  # PyYAML — optional; dashboard still works without it
+except ImportError:
+    yaml = None
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+WORKSTATIONS_YAML = ROOT / "synthetic" / "workstations.yaml"
+
+
+# Canonical list of components Terraform intends to deploy. Used for the
+# "Desired" view that renders before credentials are entered.
+PLANNED_COMPONENTS = [
+    {
+        "component": "acme-web-01 (nginx)",
+        "want": "t3.micro, AL2023, nginx installed, SSM reporting",
+    },
+    {
+        "component": "acme-app-01 (Tomcat + Log4j)",
+        "want": "t3.micro, AL2023, Tomcat 9.0.40, Log4j 2.14.1, SSM reporting",
+    },
+    {
+        "component": "SSM managed (both hosts online)",
+        "want": "Both EC2 hosts appear in DescribeInstanceInformation",
+    },
+    {
+        "component": "Inventory bucket",
+        "want": "acme-ssm-inventory-* S3 bucket with Resource Data Sync",
+    },
+    {
+        "component": "Synthetic workstations seeded",
+        "want": "10 fabricated hosts in s3://…/synthetic/",
+    },
+    {
+        "component": "vcisco-readonly cross-account role",
+        "want": "IAM role vcisco can assume with ExternalId",
+    },
+]
+
+
+# Trust + permissions policies that define the vcisco-readonly role.
+# Mirrored from terraform/iam.tf — update both when one changes.
+def vcisco_trust_policy(vcisco_account_id: str = "VCISCO_ACCOUNT_ID",
+                        external_id: str = "YOUR_EXTERNAL_ID") -> dict:
+    return {
+        "Version": "2012-10-17",
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Principal": {"AWS": f"arn:aws:iam::{vcisco_account_id}:root"},
+                "Action": "sts:AssumeRole",
+                "Condition": {
+                    "StringEquals": {"sts:ExternalId": external_id}
+                },
+            }
+        ],
+    }
+
+
+VCISCO_PERMISSIONS_POLICY = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "ReadInventoryAndInstances",
+            "Effect": "Allow",
+            "Action": [
+                "ssm:DescribeInstanceInformation",
+                "ssm:ListInventoryEntries",
+                "ssm:GetInventory",
+                "ssm:GetInventorySchema",
+                "ssm:ListResourceDataSync",
+                "ec2:DescribeInstances",
+                "ec2:DescribeTags",
+            ],
+            "Resource": "*",
+        },
+        {
+            "Sid": "RunPatchingCommands",
+            "Effect": "Allow",
+            "Action": [
+                "ssm:SendCommand",
+                "ssm:GetCommandInvocation",
+                "ssm:ListCommandInvocations",
+                "ssm:ListCommands",
+            ],
+            "Resource": "*",
+        },
+        {
+            "Sid": "ReadSyncedInventoryBucket",
+            "Effect": "Allow",
+            "Action": ["s3:GetObject", "s3:ListBucket"],
+            "Resource": [
+                "arn:aws:s3:::acme-ssm-inventory-*",
+                "arn:aws:s3:::acme-ssm-inventory-*/*",
+            ],
+        },
+    ],
+}
 
 
 app = Flask(__name__)
@@ -79,6 +179,50 @@ def _client(service: str):
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+@app.get("/api/plan")
+def plan():
+    """Static view of what Terraform intends to deploy + the synthetic
+    workstation personas. Works without AWS credentials — lets you see the
+    shape of the testbed before connecting."""
+    workstations: list[dict] = []
+    if WORKSTATIONS_YAML.exists() and yaml is not None:
+        try:
+            data = yaml.safe_load(WORKSTATIONS_YAML.read_text()) or {}
+            workstations = data.get("workstations", [])
+        except Exception:
+            workstations = []
+    return jsonify(
+        {
+            "components": PLANNED_COMPONENTS,
+            "workstations": workstations,
+        }
+    )
+
+
+@app.get("/api/policies")
+def policies():
+    """Trust + permissions policy for the vcisco-readonly role, ready to
+    copy into AWS IAM. Optional query params personalize the trust policy:
+      /api/policies?account=123456789012&external_id=abc123
+    """
+    account = request.args.get("account", "VCISCO_ACCOUNT_ID")
+    external_id = request.args.get("external_id", "YOUR_EXTERNAL_ID")
+    return jsonify(
+        {
+            "trust_policy": vcisco_trust_policy(account, external_id),
+            "permissions_policy": VCISCO_PERMISSIONS_POLICY,
+            "role_name": "vciso-readonly",
+            "notes": [
+                "Trust policy goes on the role's 'Trust relationships' tab.",
+                "Permissions policy is attached inline on the same role.",
+                "Replace VCISCO_ACCOUNT_ID with the AWS account ID where vcisco runs.",
+                "Replace YOUR_EXTERNAL_ID with a long random secret string — paste the same value into vcisco's 'Connect AWS' flow.",
+                "Terraform creates all of this for you automatically; these policies are for reference / manual setup / audits.",
+            ],
+        }
+    )
 
 
 @app.post("/api/connect")
