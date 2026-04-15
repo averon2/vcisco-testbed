@@ -1,0 +1,116 @@
+# Synthetic workstation personas for Acme Widgets Co.
+#
+# Each persona represents a real small-business employee pattern. The publish
+# script (publish.py) expands these into SSM-Inventory-shaped JSON records and
+# uploads them to the inventory S3 bucket under a synthetic/ prefix. vcisco
+# reads both real (SSM-delivered) and synthetic records from the same bucket.
+#
+# The distribution is deliberately uneven: most employees are "fine," a couple
+# are a little behind, and one or two are a disaster. That's what real SMBs
+# look like, and it's what makes vcisco's output interesting.
+
+workstations:
+  - id: WKS-001
+    hostname: acme-founder-laptop
+    persona: "Founder — admin rights, installs whatever she needs"
+    os: "Windows 11 Pro 22H2"
+    apps:
+      - { name: "Google Chrome",      version: "120.0.6099.224" }
+      - { name: "Microsoft 365 Apps", version: "16.0.17126.20132" }
+      - { name: "Slack",              version: "4.36.140" }
+      - { name: "Zoom",               version: "5.17.0" }
+      - { name: "Notion",             version: "3.5.0" }
+      - { name: "Visual Studio Code", version: "1.85.1" }
+      - { name: "Git",                version: "2.43.0" }
+      - { name: "Node.js",            version: "20.10.0" }
+
+  - id: WKS-002
+    hostname: acme-sales-01
+    persona: "Sales rep — fairly current"
+    os: "Windows 11 Pro 22H2"
+    apps:
+      - { name: "Google Chrome",      version: "119.0.6045.200" }
+      - { name: "Microsoft 365 Apps", version: "16.0.17029.20108" }
+      - { name: "Slack",              version: "4.35.131" }
+      - { name: "Zoom",               version: "5.16.10" }
+      - { name: "Adobe Acrobat Reader DC", version: "23.006.20380" }
+
+  - id: WKS-003
+    hostname: acme-sales-02
+    persona: "Sales rep — a little behind"
+    os: "Windows 11 Pro 22H2"
+    apps:
+      - { name: "Google Chrome",      version: "117.0.5938.134" }
+      - { name: "Microsoft 365 Apps", version: "16.0.16827.20130" }
+      - { name: "Slack",              version: "4.33.90" }
+      - { name: "Zoom",               version: "5.15.5" }
+
+  - id: WKS-004
+    hostname: acme-ops-01
+    persona: "Operations — uses older tooling, resistant to updates"
+    os: "Windows 10 Pro 22H2"
+    apps:
+      - { name: "Google Chrome",      version: "114.0.5735.199" }
+      - { name: "Microsoft Office Professional Plus 2019", version: "16.0.10396.20023" }
+      - { name: "Adobe Acrobat Reader DC", version: "22.003.20310" }
+      - { name: "7-Zip",              version: "21.07" }
+
+  - id: WKS-005
+    hostname: acme-ops-02
+    persona: "Operations — same profile as ops-01"
+    os: "Windows 10 Pro 22H2"
+    apps:
+      - { name: "Google Chrome",      version: "114.0.5735.199" }
+      - { name: "Microsoft Office Professional Plus 2019", version: "16.0.10396.20023" }
+      - { name: "Mozilla Firefox",    version: "115.5.0" }
+
+  - id: WKS-006
+    hostname: acme-marketing-01
+    persona: "Marketing — lots of creative apps"
+    os: "macOS 14.2 (Sonoma)"
+    apps:
+      - { name: "Google Chrome",      version: "120.0.6099.199" }
+      - { name: "Microsoft 365 Apps for Mac", version: "16.80.23121017" }
+      - { name: "Slack",              version: "4.36.140" }
+      - { name: "Adobe Photoshop",    version: "24.7.1" }
+      - { name: "Figma",              version: "116.16.5" }
+
+  - id: WKS-007
+    hostname: acme-finance-01
+    persona: "Finance — Excel all day, careful about updates"
+    os: "Windows 11 Pro 22H2"
+    apps:
+      - { name: "Google Chrome",      version: "120.0.6099.129" }
+      - { name: "Microsoft 365 Apps", version: "16.0.17029.20108" }
+      - { name: "QuickBooks Desktop", version: "R10_2023" }
+      - { name: "Adobe Acrobat Reader DC", version: "23.006.20380" }
+
+  - id: WKS-008
+    hostname: acme-accounting-steve
+    persona: "Steve in accounting — never updates anything, ever"
+    os: "Windows 10 Pro 21H2"
+    apps:
+      - { name: "Google Chrome",      version: "109.0.5414.120" }
+      - { name: "Microsoft Office Professional Plus 2016", version: "16.0.5278.1000" }
+      - { name: "Adobe Acrobat Reader DC", version: "21.007.20099" }
+      - { name: "Java 8",             version: "1.8.0_291" }
+      - { name: "WinRAR",             version: "5.80" }
+      - { name: "Mozilla Firefox",    version: "102.8.0esr" }
+
+  - id: WKS-009
+    hostname: acme-intern-01
+    persona: "Intern — brand-new image, mostly current"
+    os: "Windows 11 Pro 23H2"
+    apps:
+      - { name: "Google Chrome",      version: "120.0.6099.224" }
+      - { name: "Microsoft 365 Apps", version: "16.0.17126.20132" }
+      - { name: "Slack",              version: "4.36.140" }
+
+  - id: WKS-010
+    hostname: acme-shop-floor-kiosk
+    persona: "Shop floor kiosk — abandoned, nobody logs in"
+    os: "Windows 10 Pro 1909"
+    apps:
+      - { name: "Google Chrome",      version: "91.0.4472.124" }
+      - { name: "TeamViewer",         version: "14.7.48350" }
+      - { name: "Adobe Acrobat Reader DC", version: "20.013.20074" }

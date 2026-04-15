@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+
+region            = "us-east-1"
+allowed_ssh_cidr  = "YOUR.IP.HERE/32"
+
+# The AWS account ID where vcisco's backend runs.
+vciso_account_id  = "123456789012"
+
+# A long random string. Treat as a secret. vcisco presents this when
+# assuming the cross-account role.
+vciso_external_id = "replace-with-a-long-random-string"
+
+# Set to true to add a Windows Server workstation (~$20/mo extra).
+enable_windows    = false

@@ -1,0 +1,19 @@
+# Optional: remote state backend.
+#
+# v1 ships with local tfstate (just a file in terraform/). If multiple
+# operators will run `make up` / `make down` against the same environment,
+# rename this file to backend.tf and fill in a pre-existing S3 bucket
+# you create out-of-band.
+#
+# Bootstrap (one-time, manual):
+#   aws s3 mb s3://acme-testbed-tfstate --region us-east-1
+#   aws s3api put-bucket-versioning --bucket acme-testbed-tfstate \
+#     --versioning-configuration Status=Enabled
+#
+# terraform {
+#   backend "s3" {
+#     bucket = "acme-testbed-tfstate"
+#     key    = "acme/terraform.tfstate"
+#     region = "us-east-1"
+#   }
+# }
