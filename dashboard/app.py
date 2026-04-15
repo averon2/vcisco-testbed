@@ -386,54 +386,223 @@ def status():
 
     # ── Desired-vs-actual summary ───────────────────────────────────
     # What Terraform is supposed to produce, compared to what we see.
-    names = {i["name"] for i in out["instances"]}
-    ssm_online = {m["id"] for m in out["ssm_managed"] if m.get("ping") == "Online"}
-    instance_ids_online = {
-        i["id"] for i in out["instances"] if i["id"] in ssm_online
-    }
-
-    out["desired_state"] = [
-        {
-            "component": "acme-web-01 (nginx)",
-            "want": "t3.micro, AL2023, nginx installed, SSM reporting",
-            "ok": "acme-web-01" in names
-            and any(
-                i["name"] == "acme-web-01" and i["state"] == "running"
-                for i in out["instances"]
-            ),
-        },
-        {
-            "component": "acme-app-01 (Tomcat + Log4j)",
-            "want": "t3.micro, AL2023, Tomcat 9.0.40, SSM reporting",
-            "ok": "acme-app-01" in names
-            and any(
-                i["name"] == "acme-app-01" and i["state"] == "running"
-                for i in out["instances"]
-            ),
-        },
-        {
-            "component": "SSM managed (both hosts online)",
-            "want": "Both EC2 hosts appear in DescribeInstanceInformation",
-            "ok": len(instance_ids_online) >= 2,
-        },
-        {
-            "component": "Inventory bucket",
-            "want": "acme-ssm-inventory-* S3 bucket exists",
-            "ok": out["inventory_bucket"] is not None,
-        },
-        {
-            "component": "Synthetic workstations seeded",
-            "want": "10 fabricated hosts in s3://…/synthetic/",
-            "ok": (out["inventory_bucket"] or {}).get("synthetic_count", 0) > 0,
-        },
-        {
-            "component": "vcisco-readonly cross-account role",
-            "want": "IAM role exists for vcisco to assume",
-            "ok": out["vciso_role"] is not None,
-        },
-    ]
+    out["desired_state"] = _build_desired_state(out)
 
     return jsonify(out)
+
+
+def _fmt_age(iso_str: str | None) -> str:
+    if not iso_str:
+        return "—"
+    try:
+        from datetime import datetime, timezone
+
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        delta = datetime.now(timezone.utc) - dt
+        s = int(delta.total_seconds())
+        if s < 60:
+            return f"{s}s ago"
+        if s < 3600:
+            return f"{s // 60}m ago"
+        if s < 86400:
+            return f"{s // 3600}h ago"
+        return f"{s // 86400}d ago"
+    except Exception:  # noqa: BLE001
+        return iso_str
+
+
+def _find_instance(instances: list[dict], name: str) -> dict | None:
+    return next((i for i in instances if i.get("name") == name), None)
+
+
+def _ssm_for(ssm_list: list[dict], instance_id: str | None) -> dict | None:
+    if not instance_id:
+        return None
+    return next((m for m in ssm_list if m.get("id") == instance_id), None)
+
+
+def _build_desired_state(out: dict) -> list[dict]:
+    """Turn the raw /api/status payload into a per-component health view.
+
+    Each row gets:
+      status  → 'live' | 'missing' | 'partial' | 'degraded'
+      detail  → one-line human summary ('running · 34.201.x.x · 1h uptime')
+      facts   → dict of short key/value pairs for the expanded panel
+    """
+    rows: list[dict] = []
+    instances = out["instances"]
+    ssm_list = out["ssm_managed"]
+    bucket = out["inventory_bucket"]
+    role = out["vciso_role"]
+
+    # ── acme-web-01 ────────────────────────────────────────────────
+    web = _find_instance(instances, "acme-web-01")
+    web_ssm = _ssm_for(ssm_list, web["id"]) if web else None
+    if not web:
+        rows.append({
+            "component": "acme-web-01 (nginx)",
+            "want": "t3.micro, AL2023, nginx installed, SSM reporting",
+            "status": "missing",
+            "detail": "not deployed — run `make up`",
+            "facts": {},
+        })
+    else:
+        running = web["state"] == "running"
+        ssm_ok = web_ssm and web_ssm.get("ping") == "Online"
+        status = "live" if running and ssm_ok else ("partial" if running else "degraded")
+        rows.append({
+            "component": "acme-web-01 (nginx)",
+            "want": "t3.micro, AL2023, nginx installed, SSM reporting",
+            "status": status,
+            "detail": f"{web['state']} · {web.get('public_ip') or 'no public IP'} · launched {_fmt_age(web.get('launch_time'))}",
+            "facts": {
+                "Instance ID": web["id"],
+                "Type": web.get("type", ""),
+                "Public IP": web.get("public_ip", "—"),
+                "Private IP": web.get("private_ip", "—"),
+                "SSM ping": (web_ssm or {}).get("ping", "not reporting"),
+                "SSM platform": f"{(web_ssm or {}).get('platform','')} {(web_ssm or {}).get('version','')}".strip() or "—",
+                "Last ping": _fmt_age((web_ssm or {}).get("last_ping")),
+            },
+        })
+
+    # ── acme-app-01 ────────────────────────────────────────────────
+    app_inst = _find_instance(instances, "acme-app-01")
+    app_ssm = _ssm_for(ssm_list, app_inst["id"]) if app_inst else None
+    if not app_inst:
+        rows.append({
+            "component": "acme-app-01 (Tomcat + Log4j)",
+            "want": "t3.micro, AL2023, Tomcat 9.0.40, Log4j 2.14.1, SSM reporting",
+            "status": "missing",
+            "detail": "not deployed — run `make up`",
+            "facts": {},
+        })
+    else:
+        running = app_inst["state"] == "running"
+        ssm_ok = app_ssm and app_ssm.get("ping") == "Online"
+        status = "live" if running and ssm_ok else ("partial" if running else "degraded")
+        rows.append({
+            "component": "acme-app-01 (Tomcat + Log4j)",
+            "want": "t3.micro, AL2023, Tomcat 9.0.40, Log4j 2.14.1, SSM reporting",
+            "status": status,
+            "detail": f"{app_inst['state']} · {app_inst.get('public_ip') or 'no public IP'} · launched {_fmt_age(app_inst.get('launch_time'))}",
+            "facts": {
+                "Instance ID": app_inst["id"],
+                "Type": app_inst.get("type", ""),
+                "Public IP": app_inst.get("public_ip", "—"),
+                "Private IP": app_inst.get("private_ip", "—"),
+                "SSM ping": (app_ssm or {}).get("ping", "not reporting"),
+                "Last ping": _fmt_age((app_ssm or {}).get("last_ping")),
+            },
+        })
+
+    # ── SSM reporting ──────────────────────────────────────────────
+    ec2_ids = {i["id"] for i in instances}
+    reporting = [m for m in ssm_list if m.get("id") in ec2_ids]
+    online = [m for m in reporting if m.get("ping") == "Online"]
+    if not instances:
+        ssm_status, ssm_detail = "missing", "no EC2 hosts yet"
+    elif len(online) == len(instances) and instances:
+        ssm_status = "live"
+        ssm_detail = f"{len(online)} of {len(instances)} hosts online"
+    elif online:
+        ssm_status = "partial"
+        ssm_detail = f"{len(online)} of {len(instances)} hosts online"
+    else:
+        ssm_status = "degraded"
+        ssm_detail = f"0 of {len(instances)} hosts pinging — agent may still be starting"
+
+    rows.append({
+        "component": "SSM telemetry",
+        "want": "Every EC2 host pings SSM and reports inventory on schedule",
+        "status": ssm_status,
+        "detail": ssm_detail,
+        "facts": {
+            m.get("id", "?"): f"{m.get('ping','?')} · last {_fmt_age(m.get('last_ping'))}"
+            for m in reporting
+        },
+    })
+
+    # ── Inventory bucket ───────────────────────────────────────────
+    if bucket is None:
+        rows.append({
+            "component": "Inventory S3 bucket",
+            "want": "acme-ssm-inventory-* bucket with Resource Data Sync",
+            "status": "missing",
+            "detail": "bucket not found",
+            "facts": {},
+        })
+    else:
+        has_real = bucket["object_count"] - bucket["synthetic_count"] > 0
+        status = "live" if has_real else "partial"
+        detail = f"{bucket['object_count']} objects · last write {_fmt_age(bucket.get('last_modified'))}"
+        if not has_real:
+            detail += " · no real-host sync yet"
+        rows.append({
+            "component": "Inventory S3 bucket",
+            "want": "acme-ssm-inventory-* bucket with Resource Data Sync",
+            "status": status,
+            "detail": detail,
+            "facts": {
+                "Bucket": bucket["name"],
+                "Total objects": bucket["object_count"],
+                "Real-host objects": bucket["object_count"] - bucket["synthetic_count"],
+                "Synthetic objects": bucket["synthetic_count"],
+                "Last modified": _fmt_age(bucket.get("last_modified")),
+            },
+        })
+
+    # ── Synthetic workstations ─────────────────────────────────────
+    synth_count = (bucket or {}).get("synthetic_count", 0)
+    # Each workstation writes 2 objects (AWS:Application + AWS:InstanceInformation)
+    expected = 10 * 2
+    if synth_count == 0:
+        rows.append({
+            "component": "Synthetic workstations",
+            "want": "10 fabricated hosts seeded into synthetic/ prefix",
+            "status": "missing",
+            "detail": "not seeded — run `make seed`",
+            "facts": {},
+        })
+    elif synth_count >= expected:
+        rows.append({
+            "component": "Synthetic workstations",
+            "want": "10 fabricated hosts seeded into synthetic/ prefix",
+            "status": "live",
+            "detail": f"{synth_count // 2} workstations seeded",
+            "facts": {"Objects": synth_count, "Expected": expected},
+        })
+    else:
+        rows.append({
+            "component": "Synthetic workstations",
+            "want": "10 fabricated hosts seeded into synthetic/ prefix",
+            "status": "partial",
+            "detail": f"{synth_count // 2} of 10 workstations seeded",
+            "facts": {"Objects": synth_count, "Expected": expected},
+        })
+
+    # ── vcisco-readonly role ───────────────────────────────────────
+    if role is None:
+        rows.append({
+            "component": "vcisco-readonly role",
+            "want": "IAM role vcisco can assume with ExternalId",
+            "status": "missing",
+            "detail": "role not found",
+            "facts": {},
+        })
+    else:
+        rows.append({
+            "component": "vcisco-readonly role",
+            "want": "IAM role vcisco can assume with ExternalId",
+            "status": "live",
+            "detail": f"ready · created {_fmt_age(role.get('created'))}",
+            "facts": {
+                "Role ARN": role["arn"],
+                "Created": _fmt_age(role.get("created")),
+            },
+        })
+
+    return rows
 
 
 @app.get("/api/inventory/<instance_id>")

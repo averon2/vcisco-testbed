@@ -96,6 +96,45 @@
   tr.clickable:hover { background: rgba(255,255,255,0.02); }
   .check-ok { color: var(--ok); font-weight: 600; }
   .check-no { color: var(--danger); font-weight: 600; }
+
+  .status-pill {
+    display: inline-block; font-size: 10.5px; font-weight: 600;
+    padding: 2px 8px; border-radius: 999px; letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .status-pill.live      { background: rgba(16,185,129,0.12);  color: var(--ok); }
+  .status-pill.partial   { background: rgba(245,158,11,0.12);  color: var(--warn); }
+  .status-pill.degraded  { background: rgba(239,68,68,0.12);   color: var(--danger); }
+  .status-pill.missing   { background: rgba(107,107,120,0.12); color: var(--faint); }
+  .status-pill.planned   { background: rgba(99,102,241,0.12);  color: var(--accent); }
+
+  .bp-row {
+    display: grid; grid-template-columns: 90px 1fr auto;
+    gap: 14px; padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer; transition: background 0.12s;
+    align-items: center;
+  }
+  .bp-row:last-child { border-bottom: none; }
+  .bp-row:hover { background: rgba(255,255,255,0.02); }
+  .bp-row.open { background: rgba(99,102,241,0.04); }
+  .bp-comp { font-size: 13px; font-weight: 500; }
+  .bp-want { font-size: 12px; color: var(--faint); margin-top: 2px; }
+  .bp-detail {
+    font-family: var(--mono); font-size: 12px; color: var(--muted);
+    text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .bp-facts {
+    grid-column: 1 / -1; margin-top: 10px;
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 10px 12px;
+    display: grid; grid-template-columns: auto 1fr; gap: 5px 18px;
+    font-family: var(--mono); font-size: 12px;
+  }
+  .bp-facts dt { color: var(--muted); }
+  .bp-facts dd { margin: 0; color: var(--text); word-break: break-all; }
+  .bp-chev { font-size: 9px; color: var(--faint); transition: transform 0.15s; margin-left: 6px; }
+  .bp-row.open .bp-chev { transform: rotate(90deg); color: var(--accent); }
   .inv-panel {
     background: var(--surface-2); border: 1px solid var(--border);
     border-radius: 8px; padding: 14px 16px; margin-top: 10px;
@@ -455,18 +494,37 @@
 
   function renderDesired(rows) {
     if (!rows || !rows.length) { $('desiredTable').innerHTML = ''; return; }
-    $('desiredTable').innerHTML = `<table><thead><tr>
-        <th style="width:40px"></th><th>Component</th><th>What we want</th>
-      </tr></thead><tbody>` +
-      rows.map(r => {
-        const cell = r.ok === null || r.ok === undefined
-          ? '<td class="muted" title="Connect to check live state">·</td>'
-          : `<td class="${r.ok ? 'check-ok' : 'check-no'}">${r.ok ? '✓' : '✗'}</td>`;
-        return `<tr>${cell}
-          <td>${escapeHtml(r.component)}</td>
-          <td class="muted">${escapeHtml(r.want)}</td>
-        </tr>`;
-      }).join('') + '</tbody></table>';
+    $('desiredTable').innerHTML = rows.map((r, i) => {
+      const status = r.status || (r.ok === null || r.ok === undefined ? 'planned' : (r.ok ? 'live' : 'missing'));
+      const detail = r.detail || (status === 'planned' ? 'connect to check live state' : '');
+      const hasFacts = r.facts && Object.keys(r.facts).length > 0;
+      const factsHtml = hasFacts
+        ? `<dl class="bp-facts" id="bp-facts-${i}" hidden>${
+            Object.entries(r.facts).map(([k, v]) =>
+              `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd>`
+            ).join('')
+          }</dl>` : '';
+      return `
+        <div class="bp-row" data-bp-idx="${i}">
+          <div><span class="status-pill ${status}">${status}</span></div>
+          <div>
+            <div class="bp-comp">${escapeHtml(r.component)}${hasFacts ? '<span class="bp-chev">▶</span>' : ''}</div>
+            <div class="bp-want">${escapeHtml(r.want)}</div>
+          </div>
+          <div class="bp-detail" title="${escapeHtml(detail)}">${escapeHtml(detail)}</div>
+          ${factsHtml}
+        </div>`;
+    }).join('');
+    $('desiredTable').querySelectorAll('.bp-row').forEach(row => {
+      row.onclick = () => {
+        const idx = row.dataset.bpIdx;
+        const facts = document.getElementById('bp-facts-' + idx);
+        if (!facts) return;
+        const isOpen = !facts.hidden;
+        facts.hidden = isOpen;
+        row.classList.toggle('open', !isOpen);
+      };
+    });
   }
 
   async function toggleInventory(instanceId) {
