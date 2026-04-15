@@ -189,7 +189,7 @@ def plan():
     workstations: list[dict] = []
     if WORKSTATIONS_YAML.exists() and yaml is not None:
         try:
-            data = yaml.safe_load(WORKSTATIONS_YAML.read_text()) or {}
+            data = yaml.safe_load(WORKSTATIONS_YAML.read_text(encoding="utf-8")) or {}
             workstations = data.get("workstations", [])
         except Exception:
             workstations = []
