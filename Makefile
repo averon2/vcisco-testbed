@@ -1,4 +1,4 @@
-.PHONY: up down plan seed status cost init fmt validate
+.PHONY: up down plan seed status cost init fmt validate dashboard
 
 TF = terraform -chdir=terraform
 
@@ -24,6 +24,10 @@ status:
 
 seed:
 	python synthetic/publish.py
+
+dashboard:
+	@echo "Starting dashboard at http://127.0.0.1:5050"
+	python dashboard/app.py
 
 fmt:
 	$(TF) fmt -recursive

@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Acme Testbed · Control</title>
+<style>
+  :root {
+    --bg: #0b0b10;
+    --surface: #14141b;
+    --surface-2: #1a1a22;
+    --border: #2a2a35;
+    --text: #e8e8ee;
+    --muted: #9a9aa8;
+    --faint: #6b6b78;
+    --accent: #6366f1;
+    --ok: #10b981;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --mono: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+    --r: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    padding: 22px 32px; border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  header h1 { font-size: 16px; font-weight: 600; margin: 0; }
+  header .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  header .right { display: flex; gap: 8px; align-items: center; }
+  .pill {
+    font-size: 11px; padding: 4px 10px; border-radius: 999px;
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--muted);
+  }
+  .pill.ok { color: var(--ok); border-color: rgba(16,185,129,0.3); background: rgba(16,185,129,0.08); }
+  .pill.off { color: var(--faint); }
+
+  main { max-width: 1100px; margin: 0 auto; padding: 28px 32px; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--r); padding: 20px 22px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 13px; margin: 0 0 12px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--muted); }
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+  .field label { font-size: 12px; color: var(--muted); }
+  .field input, .field select {
+    background: var(--surface-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 9px 11px; color: var(--text); font: inherit;
+    font-family: var(--mono);
+  }
+  .field input:focus, .field select:focus { outline: none; border-color: var(--accent); }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  button {
+    background: var(--accent); color: white; border: none;
+    padding: 10px 16px; border-radius: 6px; font: inherit; font-weight: 500;
+    cursor: pointer; transition: opacity 0.15s;
+  }
+  button:hover { opacity: 0.9; }
+  button.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  button.danger { background: transparent; border: 1px solid rgba(239,68,68,0.4); color: var(--danger); }
+
+  .grid-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); padding: 16px; }
+  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .stat-value { font-size: 24px; font-weight: 600; margin-top: 6px; }
+  .stat-sub { font-size: 11px; color: var(--faint); margin-top: 4px; }
+  .stat-value.danger { color: var(--danger); }
+  .stat-value.ok { color: var(--ok); }
+  .stat-value.warn { color: var(--warn); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 9px 10px; text-align: left; border-bottom: 1px solid var(--border); }
+  th { font-size: 11px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  td { font-family: var(--mono); color: var(--text); }
+  td.muted { color: var(--muted); }
+  .state-running { color: var(--ok); }
+  .state-stopped { color: var(--faint); }
+  .state-pending, .state-stopping { color: var(--warn); }
+
+  .hidden { display: none; }
+  .empty { padding: 24px; text-align: center; color: var(--faint); font-size: 13px; border: 1px dashed var(--border); border-radius: var(--r); }
+
+  .error {
+    background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.3);
+    color: #fca5a5; padding: 10px 14px; border-radius: 6px;
+    font-size: 12px; margin-bottom: 12px; font-family: var(--mono);
+  }
+
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 6px 18px; font-size: 13px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; font-family: var(--mono); }
+
+  .toolbar { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; justify-content: flex-end; }
+  .toolbar .spacer { flex: 1; }
+  .toolbar .updated { font-size: 11px; color: var(--faint); }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Acme Widgets Co. · Testbed Control</h1>
+    <div class="sub">Operator dashboard for the vcisco-testbed AWS environment</div>
+  </div>
+  <div class="right">
+    <span class="pill off" id="connPill">Not connected</span>
+  </div>
+</header>
+
+<main>
+
+  <!-- Connect card -->
+  <div class="card" id="connectCard">
+    <h2>AWS Credentials</h2>
+    <p style="color:var(--muted); font-size:13px; margin-top:-4px;">
+      Used for this session only. Kept in the dashboard process's memory. Never written to disk.
+      Use a read-only IAM user or short-lived STS credentials.
+    </p>
+    <div id="connectError"></div>
+
+    <div class="row2">
+      <div class="field">
+        <label>Access key ID</label>
+        <input type="text" id="fAccess" placeholder="AKIA…" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label>Region</label>
+        <input type="text" id="fRegion" value="us-east-1" />
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Secret access key</label>
+      <input type="password" id="fSecret" autocomplete="off" />
+    </div>
+
+    <div class="field">
+      <label>Session token (optional — for STS / SSO)</label>
+      <input type="password" id="fToken" autocomplete="off" />
+    </div>
+
+    <button id="btnConnect">Connect</button>
+  </div>
+
+  <!-- Status area -->
+  <div id="statusArea" class="hidden">
+
+    <div class="toolbar">
+      <span class="updated" id="updated"></span>
+      <div class="spacer"></div>
+      <button class="ghost" id="btnRefresh">Refresh</button>
+      <button class="danger" id="btnDisconnect">Disconnect</button>
+    </div>
+
+    <div id="errBox"></div>
+
+    <div class="grid-stats">
+      <div class="stat">
+        <div class="stat-label">Running instances</div>
+        <div class="stat-value" id="sInstances">—</div>
+        <div class="stat-sub" id="sInstancesSub">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">SSM reporting</div>
+        <div class="stat-value" id="sSSM">—</div>
+        <div class="stat-sub">managed + pinging</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Inventory objects</div>
+        <div class="stat-value" id="sObj">—</div>
+        <div class="stat-sub" id="sObjSub">in S3</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Est. monthly cost</div>
+        <div class="stat-value" id="sCost">—</div>
+        <div class="stat-sub" id="sCostSub">rough, on-demand</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>EC2 Instances</h2>
+      <div id="instTable"></div>
+    </div>
+
+    <div class="card">
+      <h2>SSM Managed Hosts</h2>
+      <div id="ssmTable"></div>
+    </div>
+
+    <div class="card">
+      <h2>Inventory Bucket</h2>
+      <div id="bucketInfo"></div>
+    </div>
+
+    <div class="card">
+      <h2>vcisco Cross-Account Role</h2>
+      <div id="roleInfo"></div>
+    </div>
+
+  </div>
+</main>
+
+<script>
+  const $ = id => document.getElementById(id);
+
+  function showError(target, msg) {
+    target.innerHTML = msg ? `<div class="error">${escapeHtml(msg)}</div>` : '';
+  }
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  async function api(path, opts = {}) {
+    const r = await fetch(path, { headers: { 'Content-Type': 'application/json' }, ...opts });
+    const j = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, body: j };
+  }
+
+  async function connect() {
+    showError($('connectError'), '');
+    const payload = {
+      access_key: $('fAccess').value,
+      secret_key: $('fSecret').value,
+      session_token: $('fToken').value,
+      region: $('fRegion').value,
+    };
+    const r = await api('/api/connect', { method: 'POST', body: JSON.stringify(payload) });
+    if (!r.ok) {
+      showError($('connectError'), r.body.error || `HTTP ${r.status}`);
+      return;
+    }
+    $('connPill').className = 'pill ok';
+    $('connPill').textContent = `${r.body.account} · ${r.body.region}`;
+    $('connectCard').classList.add('hidden');
+    $('statusArea').classList.remove('hidden');
+    refresh();
+  }
+
+  async function disconnect() {
+    await api('/api/disconnect', { method: 'POST' });
+    $('connPill').className = 'pill off';
+    $('connPill').textContent = 'Not connected';
+    $('statusArea').classList.add('hidden');
+    $('connectCard').classList.remove('hidden');
+    ['fAccess','fSecret','fToken'].forEach(id => $(id).value = '');
+  }
+
+  async function refresh() {
+    const r = await api('/api/status');
+    if (r.status === 401) { disconnect(); return; }
+    render(r.body);
+    $('updated').textContent = 'Updated ' + new Date().toLocaleTimeString();
+  }
+
+  function render(s) {
+    showError($('errBox'), (s.errors || []).join('  ·  '));
+
+    const running = (s.instances || []).filter(i => i.state === 'running').length;
+    const total = (s.instances || []).length;
+    $('sInstances').textContent = running;
+    $('sInstances').className = 'stat-value ' + (running > 0 ? 'ok' : '');
+    $('sInstancesSub').textContent = `${total} total · ${total - running} stopped/other`;
+
+    const ssmOk = (s.ssm_managed || []).filter(m => m.ping === 'Online').length;
+    $('sSSM').textContent = ssmOk;
+    $('sSSM').className = 'stat-value ' + (ssmOk > 0 ? 'ok' : '');
+
+    const bucket = s.inventory_bucket;
+    $('sObj').textContent = bucket ? bucket.object_count : '0';
+    $('sObjSub').textContent = bucket ? `${bucket.synthetic_count} synthetic` : 'no bucket yet';
+
+    const cost = s.cost_estimate || {};
+    $('sCost').textContent = cost.monthly_usd != null ? `$${cost.monthly_usd.toFixed(2)}` : '—';
+    $('sCostSub').textContent = cost.note || '';
+
+    // Instances table
+    if (!total) {
+      $('instTable').innerHTML = `<div class="empty">No testbed instances. Run <code>make up</code> in the repo.</div>`;
+    } else {
+      $('instTable').innerHTML = `<table><thead><tr>
+          <th>Name</th><th>Role</th><th>Type</th><th>State</th><th>Public IP</th><th>Launched</th>
+        </tr></thead><tbody>` +
+        s.instances.map(i => `<tr>
+          <td>${escapeHtml(i.name || i.id)}</td>
+          <td class="muted">${escapeHtml(i.role || '')}</td>
+          <td class="muted">${escapeHtml(i.type || '')}</td>
+          <td class="state-${escapeHtml(i.state || '')}">${escapeHtml(i.state || '')}</td>
+          <td>${escapeHtml(i.public_ip || '—')}</td>
+          <td class="muted">${i.launch_time ? new Date(i.launch_time).toLocaleString() : '—'}</td>
+        </tr>`).join('') + '</tbody></table>';
+    }
+
+    // SSM table
+    const m = s.ssm_managed || [];
+    if (!m.length) {
+      $('ssmTable').innerHTML = `<div class="empty">No hosts reporting to SSM yet. Agent takes a minute or two after boot.</div>`;
+    } else {
+      $('ssmTable').innerHTML = `<table><thead><tr>
+          <th>Instance</th><th>Platform</th><th>Ping</th><th>Last ping</th>
+        </tr></thead><tbody>` +
+        m.map(h => `<tr>
+          <td>${escapeHtml(h.id)}</td>
+          <td class="muted">${escapeHtml(h.platform || '')} ${escapeHtml(h.version || '')}</td>
+          <td class="${h.ping === 'Online' ? 'state-running' : 'state-stopped'}">${escapeHtml(h.ping || '')}</td>
+          <td class="muted">${h.last_ping ? new Date(h.last_ping).toLocaleString() : '—'}</td>
+        </tr>`).join('') + '</tbody></table>';
+    }
+
+    // Bucket
+    if (bucket) {
+      $('bucketInfo').innerHTML = `<dl class="kv">
+        <dt>Bucket</dt><dd>${escapeHtml(bucket.name)}</dd>
+        <dt>Objects</dt><dd>${bucket.object_count}</dd>
+        <dt>Synthetic workstations</dt><dd>${bucket.synthetic_count}</dd>
+        <dt>Last modified</dt><dd>${bucket.last_modified ? new Date(bucket.last_modified).toLocaleString() : '—'}</dd>
+      </dl>`;
+    } else {
+      $('bucketInfo').innerHTML = `<div class="empty">Inventory bucket not found.</div>`;
+    }
+
+    // Role
+    if (s.vciso_role) {
+      $('roleInfo').innerHTML = `<dl class="kv">
+        <dt>Role ARN</dt><dd>${escapeHtml(s.vciso_role.arn)}</dd>
+        <dt>Created</dt><dd>${s.vciso_role.created ? new Date(s.vciso_role.created).toLocaleString() : '—'}</dd>
+      </dl><p style="font-size:12px;color:var(--muted);margin-top:10px;">
+      Paste this ARN plus your ExternalId into vcisco's "Connect AWS" flow.</p>`;
+    } else {
+      $('roleInfo').innerHTML = `<div class="empty">vcisco-readonly role not found — has <code>make up</code> finished?</div>`;
+    }
+  }
+
+  $('btnConnect').onclick = connect;
+  $('btnRefresh').onclick = refresh;
+  $('btnDisconnect').onclick = disconnect;
+
+  // Enter key in any cred field submits.
+  ['fAccess','fSecret','fToken','fRegion'].forEach(id => {
+    $(id).addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
+  });
+</script>
+</body>
+</html>
