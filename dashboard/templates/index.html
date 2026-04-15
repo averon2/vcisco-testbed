@@ -164,6 +164,21 @@
   .copy-btn:hover { color: var(--text); border-color: var(--accent); }
   .copy-btn.copied { color: var(--ok); border-color: var(--ok); }
 
+  .connect-pair { display: flex; flex-direction: column; gap: 10px; }
+  .connect-row { display: flex; gap: 14px; align-items: flex-start; }
+  .connect-label {
+    font-size: 11px; color: var(--muted); text-transform: uppercase;
+    letter-spacing: 0.05em; font-weight: 600; width: 110px; padding-top: 10px;
+  }
+  details.advanced-section { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px; }
+  details.advanced-section summary {
+    cursor: pointer; font-size: 12px; color: var(--muted);
+    padding: 6px 0; list-style: none; user-select: none;
+  }
+  details.advanced-section summary::-webkit-details-marker { display: none; }
+  details.advanced-section summary::before { content: "▶ "; font-size: 9px; color: var(--faint); }
+  details.advanced-section[open] summary::before { content: "▼ "; }
+
   .policy-tabs { display: flex; gap: 4px; margin-bottom: 10px; }
   .policy-tab {
     background: transparent; border: 1px solid var(--border);
@@ -212,34 +227,69 @@
     <div id="synthPanels"></div>
   </div>
 
-  <!-- Always-visible: IAM policies to wire vcisco to the testbed -->
+  <!-- Always-visible: what to paste into vcisco -->
   <div class="card">
     <h2>Connect vcisco to this testbed</h2>
-    <p style="color:var(--muted); font-size:12px; margin:-4px 0 12px;">
-      Terraform creates the <code>vciso-readonly</code> role for you. These policies are mirrored here so you can paste them into IAM manually, audit what they grant, or share with a prospect's security team.
+    <p style="color:var(--muted); font-size:12px; margin:-4px 0 14px;">
+      vcisco uses a cross-account IAM role — <strong>no access keys</strong>. Terraform creates the role for you; you just paste these two values into vcisco's "Connect AWS" flow.
     </p>
 
-    <div class="row2" style="margin-bottom:14px">
-      <div class="field">
-        <label>vcisco AWS account ID</label>
-        <input type="text" id="polAccount" placeholder="123456789012" />
+    <div class="connect-pair">
+      <div class="connect-row">
+        <div class="connect-label">Role ARN</div>
+        <div class="code-wrap" style="flex:1">
+          <button class="copy-btn" data-copy-id="cpArn">Copy</button>
+          <pre class="code-block" id="cpArn">(connect to AWS to read the live value, or run `terraform output vciso_role_arn`)</pre>
+        </div>
       </div>
-      <div class="field">
-        <label>External ID (secret; same value goes in vcisco)</label>
-        <input type="text" id="polExternal" placeholder="long-random-string" />
+
+      <div class="connect-row">
+        <div class="connect-label">External ID</div>
+        <div class="code-wrap" style="flex:1">
+          <button class="copy-btn" data-copy-id="cpExt">Copy</button>
+          <pre class="code-block" id="cpExt">generate one below ↓</pre>
+        </div>
+      </div>
+
+      <div class="connect-row">
+        <div class="connect-label">Generate / set</div>
+        <div style="flex:1; display:flex; gap:8px; align-items:center">
+          <input type="text" id="polExternal" placeholder="your external ID (secret)" style="flex:1; background:var(--surface-2); border:1px solid var(--border); border-radius:6px; padding:9px 11px; color:var(--text); font-family:var(--mono); font-size:12.5px;" />
+          <button class="ghost" id="btnGenExt">Generate</button>
+        </div>
       </div>
     </div>
 
-    <div class="policy-tabs">
-      <button class="policy-tab active" data-pol="trust">Trust policy</button>
-      <button class="policy-tab" data-pol="perm">Permissions policy</button>
-      <button class="policy-tab" data-pol="notes">Notes</button>
-    </div>
+    <p style="color:var(--muted); font-size:12px; margin:14px 0 0;">
+      vcisco side: its backend will call <code>sts:AssumeRole</code> against the Role ARN, presenting the External ID. AWS issues short-lived credentials (1h default). No secret-access-key lives in vcisco's database — if the integration is compromised, rotate the External ID and the old session dies.
+    </p>
 
-    <div id="polBody" class="code-wrap">
-      <button class="copy-btn" id="polCopy">Copy</button>
-      <pre class="code-block" id="polCode">Loading…</pre>
-    </div>
+    <details class="advanced-section">
+      <summary>Advanced — raw IAM policies (for manual IAM setup, audits, or sharing with security teams)</summary>
+      <div style="padding-top:14px">
+        <div class="row2" style="margin-bottom:12px">
+          <div class="field">
+            <label>vcisco AWS account ID (for trust policy)</label>
+            <input type="text" id="polAccount" placeholder="123456789012" />
+          </div>
+          <div class="field">
+            <label>External ID</label>
+            <input type="text" id="polExternalRef" placeholder="(copies from above)" readonly style="opacity:0.7" />
+          </div>
+        </div>
+
+        <div class="policy-tabs">
+          <button class="policy-tab active" data-pol="trust">Trust policy</button>
+          <button class="policy-tab" data-pol="perm">Permissions policy</button>
+          <button class="policy-tab" data-pol="notes">Notes</button>
+        </div>
+
+        <div id="polBody" class="code-wrap">
+          <button class="copy-btn" id="polCopy">Copy</button>
+          <pre class="code-block" id="polCode">Loading…</pre>
+        </div>
+      </div>
+    </details>
   </div>
 
   <!-- Connect card -->
@@ -476,21 +526,44 @@
     };
   });
 
-  ['polAccount', 'polExternal'].forEach(id => {
-    $(id).addEventListener('input', () => loadPolicies());
-  });
+  $('polAccount').addEventListener('input', () => loadPolicies());
 
-  $('polCopy').onclick = async () => {
+  async function copyFrom(btn, sourceEl) {
     try {
-      await navigator.clipboard.writeText($('polCode').textContent);
-      $('polCopy').textContent = 'Copied';
-      $('polCopy').classList.add('copied');
+      await navigator.clipboard.writeText(sourceEl.textContent);
+      const original = btn.textContent;
+      btn.textContent = 'Copied';
+      btn.classList.add('copied');
       setTimeout(() => {
-        $('polCopy').textContent = 'Copy';
-        $('polCopy').classList.remove('copied');
+        btn.textContent = original;
+        btn.classList.remove('copied');
       }, 1500);
     } catch { /* ignore */ }
+  }
+
+  $('polCopy').onclick = () => copyFrom($('polCopy'), $('polCode'));
+
+  document.querySelectorAll('[data-copy-id]').forEach(btn => {
+    btn.onclick = () => copyFrom(btn, document.getElementById(btn.dataset.copyId));
+  });
+
+  // Generate a URL-safe random external ID.
+  $('btnGenExt').onclick = () => {
+    const bytes = new Uint8Array(24);
+    crypto.getRandomValues(bytes);
+    const id = btoa(String.fromCharCode(...bytes)).replace(/[+/=]/g, '').slice(0, 32);
+    $('polExternal').value = id;
+    $('polExternal').dispatchEvent(new Event('input'));
   };
+
+  // Mirror the generated external ID into the advanced section and the Role ARN box,
+  // and keep the policy JSON in sync.
+  $('polExternal').addEventListener('input', () => {
+    const v = $('polExternal').value.trim();
+    $('cpExt').textContent = v || 'generate one below ↓';
+    $('polExternalRef').value = v;
+    loadPolicies();
+  });
 
   function renderDesired(rows) {
     if (!rows || !rows.length) { $('desiredTable').innerHTML = ''; return; }
@@ -600,6 +673,11 @@
   function render(s) {
     showError($('errBox'), (s.errors || []).join('  ·  '));
     renderDesired(s.desired_state);
+
+    // Auto-populate the Role ARN copy box from live IAM.
+    if (s.vciso_role && s.vciso_role.arn) {
+      $('cpArn').textContent = s.vciso_role.arn;
+    }
 
     const running = (s.instances || []).filter(i => i.state === 'running').length;
     const total = (s.instances || []).length;
